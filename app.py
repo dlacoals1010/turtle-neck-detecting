@@ -89,7 +89,7 @@ mp_pose = mp.solutions.pose
 
 
 # --- Distance → Probabilities (Good / Mild / Severe) ---
-def distance_to_probs(distance, t_good=0.12, t_mild=0.28):
+def distance_to_probs(distance, t_good=0.12, t_mild=0.25):
     """
     Map distance from baseline to probabilities for good/mild/severe.
     t_good: below this, mostly 'good'
@@ -399,3 +399,4 @@ if ctx and ctx.state.playing:
                 sound_ph.empty()
 
         time.sleep(0.1)
+
