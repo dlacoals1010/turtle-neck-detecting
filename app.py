@@ -31,10 +31,6 @@ st.markdown(
 )
 
 st.title("🐢 AI Real-time Turtle Neck Calibration System")
-st.write(
-    "Step 1. 카메라를 보고 **가장 바른 자세** 유지\n"
-    "Step 2. 아래 Calibration 버튼 클릭\n"
-    "Step 3. 그 자세를 기준으로 Good / Mild / Severe를 실시간 분석합니다."
 )
 
 mp_pose = mp.solutions.pose
@@ -271,3 +267,4 @@ if ctx and ctx.state.playing:
 # -----------------------------
 with tab2:
     st.info("This demo focuses on real-time calibrated posture detection.")
+
