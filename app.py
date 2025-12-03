@@ -31,7 +31,7 @@ st.markdown(
 )
 
 st.title("🐢 AI Real-time Turtle Neck Calibration System")
-)
+
 
 mp_pose = mp.solutions.pose
 
@@ -267,4 +267,5 @@ if ctx and ctx.state.playing:
 # -----------------------------
 with tab2:
     st.info("This demo focuses on real-time calibrated posture detection.")
+
 
