@@ -87,6 +87,12 @@ st.markdown(
 
 mp_pose = mp.solutions.pose
 
+# ✅ NEW: static 이미지용 Pose 객체 (사진 분석용)
+pose_static = mp_pose.Pose(
+    static_image_mode=True,
+    min_detection_confidence=0.5,
+    model_complexity=1
+)
 
 # --- Distance → Probabilities (Good / Mild / Severe) ---
 def distance_to_probs(distance, t_good=0.12, t_mild=0.23):
@@ -323,7 +329,149 @@ with col_info:
     tts_ph = st.empty()
 
 
-# --- Main Update Loop ---
+# ✅ NEW: 사진 업로드용 섹션
+st.markdown("---")
+st.subheader("📷 Photo Upload Diagnosis (beta)")
+st.markdown(
+    "Upload a photo to get a posture diagnosis. "
+    "For best results, **first set your standard posture via webcam or a good photo.**"
+)
+
+# 세션 상태에 baseline 저장할 공간
+if "baseline_vector" not in st.session_state:
+    st.session_state["baseline_vector"] = None
+
+uploaded_file = st.file_uploader(
+    "Upload a photo (front / side view where shoulders and head are visible)",
+    type=["jpg", "jpeg", "png"]
+)
+
+if uploaded_file is not None:
+    # 파일 → OpenCV 이미지(BGR)
+    file_bytes = np.asarray(bytearray(uploaded_file.read()), dtype=np.uint8)
+    img_bgr = cv2.imdecode(file_bytes, cv2.IMREAD_COLOR)
+
+    if img_bgr is None:
+        st.error("❌ Could not read the image. Please try another file.")
+    else:
+        img_rgb = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB)
+
+        # Mediapipe로 포즈 추출
+        results_img = pose_static.process(img_rgb)
+
+        if not results_img.pose_landmarks:
+            st.error("😥 Could not detect your body in this photo. Try a clearer upper-body photo.")
+        else:
+            landmarks_img = results_img.pose_landmarks.landmark
+            features_img, keypoints_img = extract_features_from_landmarks(
+                landmarks_img, img_bgr.shape
+            )
+
+            # 두 컬럼: 왼쪽은 사진, 오른쪽은 결과
+            col_img, col_res = st.columns([3, 2])
+
+            with col_img:
+                # 사진 위에 keypoint + 라인 그림
+                color = (0, 255, 0)  # 기본 green
+                # 어깨/목 라인 먼저 (나중에 색 업데이트될 수 있어서 한번 더 그림)
+                if 11 in keypoints_img and 12 in keypoints_img:
+                    cv2.line(img_bgr, keypoints_img[11], keypoints_img[12], color, 2)
+                if 0 in keypoints_img and 11 in keypoints_img and 12 in keypoints_img:
+                    sh_center = (
+                        (keypoints_img[11][0] + keypoints_img[12][0]) // 2,
+                        (keypoints_img[11][1] + keypoints_img[12][1]) // 2,
+                    )
+                    cv2.line(img_bgr, sh_center, keypoints_img[0], color, 2)
+
+                for _, (px, py) in keypoints_img.items():
+                    cv2.circle(img_bgr, (px, py), 5, color, -1)
+
+                st.image(
+                    cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB),
+                    caption="Uploaded Photo with Keypoints",
+                    use_column_width=True,
+                )
+
+            with col_res:
+                st.markdown("### Result for This Photo")
+
+                # 버튼 2개: 이 사진으로 baseline 설정 / 기존 baseline으로 분석
+                set_baseline = st.button("✅ Use this photo as my standard posture")
+                analyze_photo = st.button("📊 Analyze posture vs my standard", key="analyze_photo_btn")
+
+                if set_baseline:
+                    st.session_state["baseline_vector"] = features_img
+                    st.success(
+                        "Saved this photo as your **standard posture**. "
+                        "Future photo / webcam analysis will compare to this."
+                    )
+
+                    # 웹캠 processor에도 baseline을 동기화 (가능하면)
+                    if ctx and ctx.video_processor:
+                        ctx.video_processor.baseline = np.array(features_img)
+
+                if analyze_photo:
+                    baseline_vec = st.session_state.get("baseline_vector", None)
+
+                    if baseline_vec is None:
+                        st.warning(
+                            "No standard posture saved yet. "
+                            "First, calibrate with the webcam or press "
+                            "'Use this photo as my standard posture'."
+                        )
+                    else:
+                        diff = np.array(features_img) - np.array(baseline_vec)
+                        dist_img = float(np.linalg.norm(diff))
+                        prob_dict_img = distance_to_probs(dist_img)
+                        pred_img = max(prob_dict_img, key=prob_dict_img.get)
+
+                        # 상태 텍스트
+                        if pred_img == "good":
+                            st.markdown(
+                                "<div class='good-text'>GOOD 😊</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                "<div class='advice-box'>✅ This photo is close to your standard posture.</div>",
+                                unsafe_allow_html=True,
+                            )
+                        elif pred_img == "mild":
+                            st.markdown(
+                                "<div class='mild-text'>MILD 😐</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                "<div class='advice-box'>💡 Slight forward head or shoulder tension detected.</div>",
+                                unsafe_allow_html=True,
+                            )
+                        else:
+                            st.markdown(
+                                "<div class='severe-text'>SEVERE 🐢</div>",
+                                unsafe_allow_html=True,
+                            )
+                            st.markdown(
+                                "<div class='advice-box'>🚨 Pull your chin back and open your chest more.</div>",
+                                unsafe_allow_html=True,
+                            )
+
+                        # 점수 바
+                        g_img = prob_dict_img.get("good", 0.0) * 100
+                        m_img = prob_dict_img.get("mild", 0.0) * 100
+                        s_img = prob_dict_img.get("severe", 0.0) * 100
+
+                        st.write("Good:")
+                        st.progress(int(g_img), text=f"{g_img:.1f}%")
+                        st.write("Mild:")
+                        st.progress(int(m_img), text=f"{m_img:.1f}%")
+                        st.write("Severe:")
+                        st.progress(int(s_img), text=f"{s_img:.1f}%")
+
+                        st.markdown(
+                            f"Deviation from your standard posture in this photo: **{dist_img:.3f}**"
+                        )
+
+
+# --- Main Update Loop (Webcam) ---
 if ctx and ctx.state.playing:
     while True:
         if not ctx.state.playing:
@@ -331,6 +479,10 @@ if ctx and ctx.state.playing:
 
         vp = ctx.video_processor
         if vp is not None:
+            # ✅ NEW: 웹캠에서 잡은 baseline을 세션에도 공유해서 사진에서 재사용
+            if vp.baseline is not None:
+                st.session_state["baseline_vector"] = list(vp.baseline)
+
             probs = vp.latest_probs
             pred = vp.latest_pred
             trigger_sound = vp.trigger_sound
@@ -399,9 +551,3 @@ if ctx and ctx.state.playing:
                 sound_ph.empty()
 
         time.sleep(0.1)
-
-
-
-
-
-
